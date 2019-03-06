@@ -43,7 +43,7 @@ module BodyParser
       QueryParser.parse(stream.read(max_size))
     when /^#{MULTIPART_TYPE}/
       boundary = content_type[BOUNDARY_REGEX, 1]
-      MultipartParser.parse(stream, boundary, max_size) if boundary
+      MultipartParser.parse(stream, boundary, opts) if boundary
     else
       # raise "Invalid content type: #{content_type}"
     end
@@ -104,8 +104,9 @@ module BodyParser
   module MultipartParser
     CHUNK_SIZE = 16384.freeze
 
-    def self.parse(io, boundary, max_size)
-      parts, reader = {}, Reader.new(boundary)
+    def self.parse(io, boundary, opts = {})
+      max_size = opts[:max_size] || MAX_SIZE
+      parts, reader = {}, Reader.new(boundary, opts)
 
       reader.on_error do |err|
         # puts err.inspect
@@ -387,7 +388,7 @@ module BodyParser
 
       # Initializes a MultipartReader, that will
       # read a request with the given boundary value.
-      def initialize(boundary)
+      def initialize(boundary, opts = {})
         @parser = Parser.new
         @parser.init_with_boundary(boundary)
         @header_field = ''
@@ -396,8 +397,7 @@ module BodyParser
         @ended = false
         @on_error = nil
         @on_part = nil
-
-        init_parser_callbacks
+        init_parser_callbacks(opts)
       end
 
       # Returns true if the parser has finished parsing
@@ -432,18 +432,20 @@ module BodyParser
         attr_accessor :headers, :name, :mime
         attr_reader :data, :file, :filename, :ended
 
-        def initialize
+        def initialize(root: nil)
           @headers = {}
           @data_callback = nil
           @end_callback = nil
           @data = ''
+          @root = root
           @ended = false
         end
 
         def filename=(name)
           @data = nil
           @filename = name
-          @file = File.new(TEMPDIR + "/shelf-multipart-#{Time.now.to_i}-#{name}", 'w')
+          path  = File.join(@root || TEMPDIR, "mruby-multipart-#{Time.now.to_i}-#{name}")
+          @file = File.new(path, 'w')
         end
 
         def push(data)
@@ -485,9 +487,9 @@ module BodyParser
 
       private
 
-      def init_parser_callbacks
+      def init_parser_callbacks(opts = {})
         @parser.on(:part_begin) do
-          @part = Part.new
+          @part = Part.new(root: opts[:file_root])
           @header_field = ''
           @header_value = ''
         end
